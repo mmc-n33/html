@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>行为日历</title>
+<style>
+  :root {
+    --a: #e74c3c; --b: #27ae60; --c: #2980b9; --d: #e67e22; --e: #8e44ad;
+    --bg: #f4f6f8; --line: #e3e7ec;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; background: var(--bg); color: #2d3436;
+    font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  .app { max-width: 1500px; margin: 0 auto; padding: 10px 10px 40px; }
+
+  .warn-bar {
+    display: none; background: #fff3cd; color: #856404;
+    padding: 8px 10px; border-radius: 6px; margin-bottom: 8px;
+    font-size: 12px; line-height: 1.6;
+  }
+  .warn-bar code { background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px; }
+
+  .bar {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    font-size: 12px; margin-bottom: 8px;
+  }
+  .bar button {
+    font-size: 12px; padding: 5px 12px; border: 1px solid #d0d7de;
+    background: #fff; border-radius: 6px; cursor: pointer; color: #444;
+  }
+  .bar button:active { background: #eef1f4; }
+  .bar button:disabled { opacity: .5; cursor: default; }
+  .status { display: inline-flex; align-items: center; gap: 6px; color: #555; }
+  .status .led { width: 8px; height: 8px; border-radius: 50%; background: #b2bac2; display: inline-block; }
+  .status.ok .led { background: #27ae60; }
+  .status.warn .led { background: #e67e22; }
+  .status.err .led { background: #e74c3c; }
+
+  .legend {
+    display: flex; gap: 14px; font-size: 12px; margin: 4px 0 10px;
+    color: #444; flex-wrap: wrap; align-items: center;
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .dot { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .dot.a { background: var(--a); }
+  .dot.b { background: var(--b); }
+  .dot.c { background: var(--c); }
+  .dot.d { background: var(--d); }
+  .dot.e { background: var(--e); }
+
+  .grid { display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); gap: 4px; }
+  .head-grid { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 4px 0; margin-bottom: 2px; }
+  .head { text-align: center; font-size: 11px; font-weight: 700; color: #7a8794; padding: 2px 0; }
+
+  .day {
+    background: #fff; border: 1px solid var(--line); border-radius: 6px;
+    min-height: 64px; padding: 4px; display: flex; flex-direction: column; gap: 3px;
+    overflow: hidden;
+  }
+  .day.empty { background: transparent; border-color: transparent; }
+  .day.past { background: #f7f8fa; border-color: #eceff3; }
+
+  .day-num { font-size: 11px; font-weight: 700; color: #6b7785; line-height: 1; }
+  .day.has-bg .day-num { color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.45); }
+
+  .behaviors { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; margin-top: auto; }
+  .b {
+    border: 1px solid rgba(0,0,0,0.09); background: rgba(255,255,255,0.7);
+    color: #555; font-size: 9px; font-weight: 700; padding: 2px 0;
+    border-radius: 3px; cursor: pointer; line-height: 1.2;
+  }
+  .b.on {
+    background: #fff; border-color: transparent;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.22);
+  }
+  .b.on[data-b="A"] { color: var(--a); }
+  .b.on[data-b="B"] { color: var(--b); }
+  .b.on[data-b="C"] { color: var(--c); }
+  .b.on[data-b="D"] { color: var(--d); }
+  .b.on[data-b="E"] { color: var(--e); }
+
+  @media (max-width: 720px) {
+    .grid { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
+    .day { min-height: 60px; padding: 3px; border-radius: 5px; }
+    .day-num { font-size: 10px; }
+    .behaviors { grid-template-columns: repeat(3, 1fr); }
+    .b { font-size: 9px; padding: 1px 0; border-radius: 2px; }
+    .legend { font-size: 11px; gap: 10px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="warn-bar" id="fileWarn">
+    ⚠️ 当前通过 <code>file://</code> 打开，浏览器无法自动读取同目录的 <code>behavior-calendar.json</code>。
+    请在该目录运行 <code>python3 -m http.server 8000</code>，然后访问
+    <code>http://localhost:8000/calendar.html</code>；或把两个文件一起部署到网上。
+  </div>
+
+  <div class="bar">
+    <span class="status" id="loadStatus"><i class="led"></i><span id="loadText">加载中…</span></span>
+    <span class="status" id="saveStatus"><i class="led"></i><span id="saveText">—</span></span>
+    <button id="saveBtn">保存到 json</button>
+  </div>
+
+  <div class="legend">
+    <span><i class="dot a"></i>跑</span>
+    <span><i class="dot b"></i>爬</span>
+    <span><i class="dot c"></i>攀</span>
+    <span><i class="dot d"></i>绑</span>
+    <span><i class="dot e"></i>力</span>
+  </div>
+
+  <div class="grid head-grid" id="headGrid"></div>
+  <div class="grid" id="cal"></div>
+</div>
+
+<script>
+(async function () {
+  'use strict';
+
+  const KEY = 'behavior-calendar-v1';
+  const FILE = 'behavior-calendar.json';
+  const BEHAVIORS = ['A', 'B', 'C', 'D', 'E'];
+  const LABELS = { A: '跑', B: '爬', C: '攀', D: '绑', E: '力' };
+  const COLOR = { A: '#e74c3c', B: '#27ae60', C: '#2980b9', D: '#e67e22', E: '#8e44ad' };
+  const START = new Date(2026, 10, 1);
+  const END = new Date(2027, 5, 1);
+
+  const TODAY = new Date();
+  TODAY.setHours(0, 0, 0, 0);
+
+  const IS_MOBILE = /Android|iPhone|iPad|iPod|Windows Phone|webOS|BlackBerry/i.test(navigator.userAgent)
+    || (/Macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+
+  const cal = document.getElementById('cal');
+  const headGrid = document.getElementById('headGrid');
+  const loadStatus = document.getElementById('loadStatus');
+  const loadText = document.getElementById('loadText');
+  const saveStatus = document.getElementById('saveStatus');
+  const saveText = document.getElementById('saveText');
+  const saveBtn = document.getElementById('saveBtn');
+  const fileWarn = document.getElementById('fileWarn');
+
+  if (location.protocol === 'file:') fileWarn.style.display = 'block';
+
+  // 手机端只查看：隐藏保存按钮和保存状态
+  if (IS_MOBILE) {
+    saveBtn.style.display = 'none';
+    saveStatus.style.display = 'none';
+  }
+
+  let data = {};
+  let dirty = false;
+  let fileHandle = null;
+
+  // ---------- IndexedDB：记住上次保存的文件句柄 ----------
+  const DB_NAME = 'behavior-calendar-db';
+  const STORE = 'handles';
+  function idbOpen() {
+    return new Promise(function (res, rej) {
+      const req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = function () { req.result.createObjectStore(STORE); };
+      req.onsuccess = function () { res(req.result); };
+      req.onerror = function () { rej(req.error); };
+    });
+  }
+  function idbGet(k) {
+    return idbOpen().then(function (db) {
+      return new Promise(function (res, rej) {
+        const r = db.transaction(STORE, 'readonly').objectStore(STORE).get(k);
+        r.onsuccess = function () { res(r.result); };
+        r.onerror = function () { rej(r.error); };
+      });
+    });
+  }
+  function idbSet(k, v) {
+    return idbOpen().then(function (db) {
+      return new Promise(function (res, rej) {
+        const tx = db.transaction(STORE, 'readwrite');
+        tx.objectStore(STORE).put(v, k);
+        tx.oncomplete = function () { res(); };
+        tx.onerror = function () { rej(tx.error); };
+      });
+    });
+  }
+
+  // ---------- 状态显示 ----------
+  function setLoad(kind, text) {
+    loadStatus.className = 'status' + (kind ? ' ' + kind : '');
+    loadText.textContent = text;
+  }
+  function markDirty() {
+    dirty = true;
+    if (!IS_MOBILE) {
+      saveStatus.className = 'status warn';
+      saveText.textContent = '有未保存的更改';
+    }
+  }
+  function markSaved() {
+    dirty = false;
+    if (!IS_MOBILE) {
+      saveStatus.className = 'status ok';
+      saveText.textContent = '已保存';
+    }
+  }
+
+  // ---------- 每次打开自动加载 json ----------
+  async function loadJson() {
+    setLoad('', '加载中…');
+    let fromJson = false;
+    try {
+      const resp = await fetch(FILE + '?t=' + Date.now(), { cache: 'no-store' });
+      if (resp.ok) {
+        const obj = await resp.json();
+        if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+          data = obj;
+          fromJson = true;
+        }
+      }
+    } catch (e) {}
+
+    if (fromJson) {
+      try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) {}
+      setLoad('ok', '已加载 ' + FILE);
+      markSaved();
+    } else {
+      let cached = null;
+      try { cached = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) {}
+      if (cached && typeof cached === 'object' && !Array.isArray(cached)) {
+        data = cached;
+        setLoad('warn', '未能加载 ' + FILE + '，已使用本地缓存');
+        markDirty();
+      } else {
+        data = {};
+        setLoad('err', '未能加载 ' + FILE + '（请通过 http 访问）');
+        markSaved();
+      }
+    }
+  }
+
+  // ---------- 颜色渲染：固定 A→B→C→D→E 顺序 ----------
+  function bgFor(selected) {
+    const list = BEHAVIORS.filter(function (b) { return selected.indexOf(b) !== -1; });
+    if (!list.length) return '';
+    const n = list.length;
+    if (n === 1) return COLOR[list[0]];
+    const stops = list.map(function (b, i) {
+      const s = (i / n * 100).toFixed(3);
+      const e = ((i + 1) / n * 100).toFixed(3);
+      return COLOR[b] + ' ' + s + '% ' + e + '%';
+    });
+    return 'linear-gradient(90deg, ' + stops.join(', ') + ')';
+  }
+
+  function applyCell(cell, key) {
+    const arr = Array.isArray(data[key]) ? data[key] : [];
+    cell.style.background = bgFor(arr);
+    cell.classList.toggle('has-bg', arr.length > 0);
+    cell.querySelectorAll('.b').forEach(function (btn) {
+      btn.classList.toggle('on', arr.indexOf(btn.dataset.b) !== -1);
+    });
+  }
+
+  // ---------- 表头 ----------
+  const weekNames = ['一', '二', '三', '四', '五', '六', '日'];
+  for (let k = 0; k < 2; k++) {
+    weekNames.forEach(function (n) {
+      const el = document.createElement('div');
+      el.className = 'head';
+      el.textContent = n;
+      headGrid.appendChild(el);
+    });
+  }
+
+  const firstMonday = new Date(START);
+  firstMonday.setDate(START.getDate() - ((START.getDay() + 6) % 7));
+  const lastSunday = new Date(END);
+  lastSunday.setDate(END.getDate() + (6 - ((END.getDay() + 6) % 7)));
+
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+  function keyOf(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+  function labelOf(d) { return (d.getMonth() + 1) + '.' + d.getDate(); }
+
+  function build() {
+    cal.innerHTML = '';
+    const cur = new Date(firstMonday);
+    while (cur <= lastSunday) {
+      const inRange = cur >= START && cur <= END;
+      const isPast = cur < TODAY;
+      const cell = document.createElement('div');
+
+      if (!inRange) {
+        cell.className = 'day empty';
+      } else {
+        const key = keyOf(cur);
+        cell.className = 'day' + (isPast ? ' past' : '');
+        cell.dataset.date = key;
+
+        const num = document.createElement('div');
+        num.className = 'day-num';
+        num.textContent = labelOf(cur);
+        cell.appendChild(num);
+
+        // 过去的日子不渲染按钮；手机端只查看，也不渲染
+        if (!isPast && !IS_MOBILE) {
+          const box = document.createElement('div');
+          box.className = 'behaviors';
+          BEHAVIORS.forEach(function (b) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'b';
+            btn.dataset.b = b;
+            btn.textContent = LABELS[b];
+            btn.setAttribute('aria-label', labelOf(cur) + ' ' + LABELS[b]);
+            box.appendChild(btn);
+          });
+          cell.appendChild(box);
+        }
+
+        applyCell(cell, key);
+      }
+
+      cal.appendChild(cell);
+      cur.setDate(cur.getDate() + 1);
+    }
+  }
+
+  // ---------- 点击行为：改内存 + 本地缓存，不自动写文件 ----------
+  cal.addEventListener('click', function (e) {
+    const btn = e.target.closest('.b');
+    if (!btn) return;
+    const cell = btn.closest('.day');
+    if (!cell || !cell.dataset.date) return;
+
+    const key = cell.dataset.date;
+    const b = btn.dataset.b;
+    const arr = Array.isArray(data[key]) ? data[key].slice() : [];
+    const idx = arr.indexOf(b);
+
+    if (idx === -1) arr.push(b);
+    else arr.splice(idx, 1);
+
+    if (arr.length) data[key] = arr;
+    else delete data[key];
+
+    try { localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) {}
+    applyCell(cell, key);
+    markDirty();
+  });
+
+  // ---------- 点击保存才写文件 ----------
+  async function saveToFile() {
+    const json = JSON.stringify(data, null, 2);
+
+    if ('showSaveFilePicker' in window) {
+      try {
+        if (fileHandle) {
+          let perm = await fileHandle.queryPermission({ mode: 'readwrite' });
+          if (perm !== 'granted') {
+            perm = await fileHandle.requestPermission({ mode: 'readwrite' });
+          }
+          if (perm !== 'granted') throw new Error('permission denied');
+        } else {
+          fileHandle = await window.showSaveFilePicker({
+            suggestedName: FILE,
+            types: [{ description: 'JSON 文件', accept: { 'application/json': ['.json'] } }]
+          });
+          await idbSet('saveFile', fileHandle);
+        }
+        const w = await fileHandle.createWritable();
+        await w.write(json);
+        await w.close();
+        markSaved();
+        return;
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+        console.warn('picker save failed, fallback to download', e);
+      }
+    }
+
+    // 不支持写文件时：下载 behavior-calendar.json，用户手动覆盖
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = FILE;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    markSaved();
+  }
+
+  if (!IS_MOBILE) {
+    saveBtn.addEventListener('click', function () {
+      saveBtn.disabled = true;
+      saveToFile().finally(function () { saveBtn.disabled = false; });
+    });
+  }
+
+  // ---------- 启动 ----------
+  // 恢复上次保存的文件句柄（只在权限仍是 granted 时使用，避免自动弹窗）
+  if ('showSaveFilePicker' in window) {
+    try {
+      const h = await idbGet('saveFile');
+      if (h) {
+        const perm = await h.queryPermission({ mode: 'readwrite' });
+        if (perm === 'granted') fileHandle = h;
+      }
+    } catch (e) {}
+  }
+
+  await loadJson();
+  build();
+})();
+</script>
+</body>
+</html>
