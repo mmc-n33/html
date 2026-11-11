@@ -96,14 +96,14 @@
 <div class="app">
   <div class="warn-bar" id="fileWarn">
     ⚠️ 当前通过 <code>file://</code> 打开，浏览器无法自动读取同目录的 <code>behavior-calendar.json</code>。
-    请在该目录运行 <code>python3 -m http.server 8000</code>，然后访问
-    <code>http://localhost:8000/calendar.html</code>；或把两个文件一起部署到网上。
+    请通过 <code>http://</code> 访问页面，或部署到 GitHub Pages。
   </div>
 
   <div class="bar">
     <span class="status" id="loadStatus"><i class="led"></i><span id="loadText">加载中…</span></span>
     <span class="status" id="saveStatus"><i class="led"></i><span id="saveText">—</span></span>
-    <button id="saveBtn">保存到 json</button>
+    <button id="saveBtn">保存到 GitHub</button>
+    <button id="tokenBtn">设置 Token</button>
   </div>
 
   <div class="legend">
@@ -123,12 +123,18 @@
   'use strict';
 
   const KEY = 'behavior-calendar-v1';
+  const TOKEN_KEY = 'github_pat';
   const FILE = 'behavior-calendar.json';
   const BEHAVIORS = ['A', 'B', 'C', 'D', 'E'];
   const LABELS = { A: '跑', B: '爬', C: '攀', D: '绑', E: '力' };
   const COLOR = { A: '#e74c3c', B: '#27ae60', C: '#2980b9', D: '#e67e22', E: '#8e44ad' };
   const START = new Date(2026, 10, 1);
   const END = new Date(2027, 5, 1);
+
+  // GitHub 仓库信息（根据你的 commit 链接推断）
+  const GITHUB_OWNER = 'mmc-n33';
+  const GITHUB_REPO = 'html';
+  const GITHUB_PATH = 'html/behavior-calendar.json'; // 文件在仓库中的路径
 
   const TODAY = new Date();
   TODAY.setHours(0, 0, 0, 0);
@@ -143,52 +149,20 @@
   const saveStatus = document.getElementById('saveStatus');
   const saveText = document.getElementById('saveText');
   const saveBtn = document.getElementById('saveBtn');
+  const tokenBtn = document.getElementById('tokenBtn');
   const fileWarn = document.getElementById('fileWarn');
 
   if (location.protocol === 'file:') fileWarn.style.display = 'block';
 
-  // 手机端只查看：隐藏保存按钮和保存状态
   if (IS_MOBILE) {
     saveBtn.style.display = 'none';
+    tokenBtn.style.display = 'none';
     saveStatus.style.display = 'none';
   }
 
   let data = {};
   let dirty = false;
-  let fileHandle = null;
 
-  // ---------- IndexedDB：记住上次保存的文件句柄 ----------
-  const DB_NAME = 'behavior-calendar-db';
-  const STORE = 'handles';
-  function idbOpen() {
-    return new Promise(function (res, rej) {
-      const req = indexedDB.open(DB_NAME, 1);
-      req.onupgradeneeded = function () { req.result.createObjectStore(STORE); };
-      req.onsuccess = function () { res(req.result); };
-      req.onerror = function () { rej(req.error); };
-    });
-  }
-  function idbGet(k) {
-    return idbOpen().then(function (db) {
-      return new Promise(function (res, rej) {
-        const r = db.transaction(STORE, 'readonly').objectStore(STORE).get(k);
-        r.onsuccess = function () { res(r.result); };
-        r.onerror = function () { rej(r.error); };
-      });
-    });
-  }
-  function idbSet(k, v) {
-    return idbOpen().then(function (db) {
-      return new Promise(function (res, rej) {
-        const tx = db.transaction(STORE, 'readwrite');
-        tx.objectStore(STORE).put(v, k);
-        tx.oncomplete = function () { res(); };
-        tx.onerror = function () { rej(tx.error); };
-      });
-    });
-  }
-
-  // ---------- 状态显示 ----------
   function setLoad(kind, text) {
     loadStatus.className = 'status' + (kind ? ' ' + kind : '');
     loadText.textContent = text;
@@ -208,7 +182,7 @@
     }
   }
 
-  // ---------- 每次打开自动加载 json ----------
+  // ---------- 自动加载 json ----------
   async function loadJson() {
     setLoad('', '加载中…');
     let fromJson = false;
@@ -236,13 +210,13 @@
         markDirty();
       } else {
         data = {};
-        setLoad('err', '未能加载 ' + FILE + '（请通过 http 访问）');
+        setLoad('err', '未能加载 ' + FILE);
         markSaved();
       }
     }
   }
 
-  // ---------- 颜色渲染：固定 A→B→C→D→E 顺序 ----------
+  // ---------- 颜色渲染（固定 A→B→C→D→E 顺序） ----------
   function bgFor(selected) {
     const list = BEHAVIORS.filter(function (b) { return selected.indexOf(b) !== -1; });
     if (!list.length) return '';
@@ -305,7 +279,6 @@
         num.textContent = labelOf(cur);
         cell.appendChild(num);
 
-        // 过去的日子不渲染按钮；手机端只查看，也不渲染
         if (!isPast && !IS_MOBILE) {
           const box = document.createElement('div');
           box.className = 'behaviors';
@@ -329,7 +302,7 @@
     }
   }
 
-  // ---------- 点击行为：改内存 + 本地缓存，不自动写文件 ----------
+  // ---------- 点击行为：只改内存和 localStorage ----------
   cal.addEventListener('click', function (e) {
     const btn = e.target.closest('.b');
     if (!btn) return;
@@ -352,65 +325,97 @@
     markDirty();
   });
 
-// 你需要先让用户输入 Token，并安全地存在 localStorage 里
-async function saveToGitHub() {
-  const token = localStorage.getItem('github_pat');
-  if (!token) {
-    const input = prompt('请输入你的 GitHub Token（只需一次，会保存在本浏览器）：');
-    if (!input) return;
-    localStorage.setItem('github_pat', input.trim());
+  // ---------- Token 管理 ----------
+  function getToken() {
+    return localStorage.getItem(TOKEN_KEY) || '';
   }
-  const t = localStorage.getItem('github_pat');
 
-  const owner = 'mmc-n33';
-  const repo = 'html';
-  const path = 'html/behavior-calendar.json';
-  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+  tokenBtn.addEventListener('click', function () {
+    const current = getToken();
+    const input = prompt(
+      '请输入 GitHub Fine-grained Token（需要 Contents: Read and write 权限，仅授权 mmc-n33/html 仓库）。\n留空并确定可清除已保存的 Token。',
+      current ? '（已保存，留空可清除）' : ''
+    );
+    if (input === null) return; // 取消
+    const t = input.trim();
+    if (t) {
+      localStorage.setItem(TOKEN_KEY, t);
+      alert('Token 已保存到本浏览器。');
+    } else {
+      localStorage.removeItem(TOKEN_KEY);
+      alert('Token 已清除。');
+    }
+  });
 
-  const headers = {
-    'Authorization': `Bearer ${t}`,
-    'Accept': 'application/vnd.github+json',
-    'X-GitHub-Api-Version': '2022-11-28',
-    'Content-Type': 'application/json'
-  };
-
-  try {
-    // 1. 先 GET 拿到当前文件的 sha
-    const getResp = await fetch(apiUrl, { headers });
-    if (!getResp.ok) throw new Error(`获取文件信息失败：${getResp.status}`);
-    const fileInfo = await getResp.json();
-    const sha = fileInfo.sha; // 更新文件必须带上这个
-
-    // 2. 把最新的 data 转成 JSON 字符串，再做 Base64 编码
-    const newContent = JSON.stringify(data, null, 2);
-    // 注意：btoa 不能直接处理中文，需要先 encodeURIComponent 再特殊处理
-    const contentBase64 = btoa(unescape(encodeURIComponent(newContent)));
-
-    // 3. PUT 回写文件
-    const putResp = await fetch(apiUrl, {
-      method: 'PUT',
-      headers,
-      body: JSON.stringify({
-        message: 'update behavior calendar from web',
-        content: contentBase64,
-        sha: sha
-      })
-    });
-
-    if (!putResp.ok) {
-      const errBody = await putResp.json().catch(() => ({}));
-      throw new Error(`写入失败：${putResp.status} ${errBody.message || ''}`);
+  // ---------- 保存到 GitHub ----------
+  async function saveToGitHub() {
+    const token = getToken();
+    if (!token) {
+      alert('请先点击“设置 Token”输入你的 GitHub Token。');
+      return;
     }
 
-    markSaved(); // 更新页面上的“已保存”状态
-  } catch (err) {
-    console.error(err);
-    alert('保存到 GitHub 失败：' + err.message + '\n请检查 Token 是否过期或权限不足。');
-  }
-}
+    const apiUrl = 'https://api.github.com/repos/' + GITHUB_OWNER + '/' + GITHUB_REPO + '/contents/' + GITHUB_PATH;
+    const headers = {
+      'Authorization': 'Bearer ' + token,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'Content-Type': 'application/json'
+    };
 
-// 把按钮的点击事件从 saveToFile 改为 saveToGitHub
-// saveBtn.addEventListener('click', saveToGitHub);
+    saveBtn.disabled = true;
+    saveStatus.className = 'status warn';
+    saveText.textContent = '正在保存…';
+
+    try {
+      // 1. 获取当前文件的 sha
+      const getResp = await fetch(apiUrl, { headers });
+      if (!getResp.ok) {
+        const errBody = await getResp.json().catch(function () { return {}; });
+        throw new Error('获取文件信息失败：' + getResp.status + ' ' + (errBody.message || ''));
+      }
+      const fileInfo = await getResp.json();
+      const sha = fileInfo.sha;
+
+      // 2. 编码内容（处理中文）
+      const newContent = JSON.stringify(data, null, 2);
+      const contentBase64 = btoa(unescape(encodeURIComponent(newContent)));
+
+      // 3. PUT 更新文件
+      const putResp = await fetch(apiUrl, {
+        method: 'PUT',
+        headers: headers,
+        body: JSON.stringify({
+          message: 'update behavior calendar from web',
+          content: contentBase64,
+          sha: sha
+        })
+      });
+
+      if (!putResp.ok) {
+        const errBody = await putResp.json().catch(function () { return {}; });
+        throw new Error('写入失败：' + putResp.status + ' ' + (errBody.message || ''));
+      }
+
+      markSaved();
+    } catch (err) {
+      console.error(err);
+      saveStatus.className = 'status err';
+      saveText.textContent = '保存失败';
+      alert('保存到 GitHub 失败：' + err.message + '\n请检查 Token 是否过期或权限不足。');
+    } finally {
+      saveBtn.disabled = false;
+    }
+  }
+
+  if (!IS_MOBILE) {
+    saveBtn.addEventListener('click', saveToGitHub);
+  }
+
+  // ---------- 启动 ----------
+  await loadJson();
+  build();
+})();
 </script>
 </body>
 </html>
