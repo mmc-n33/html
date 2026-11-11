@@ -352,71 +352,65 @@
     markDirty();
   });
 
-  // ---------- 点击保存才写文件 ----------
-  async function saveToFile() {
-    const json = JSON.stringify(data, null, 2);
+// 你需要先让用户输入 Token，并安全地存在 localStorage 里
+async function saveToGitHub() {
+  const token = localStorage.getItem('github_pat');
+  if (!token) {
+    const input = prompt('请输入你的 GitHub Token（只需一次，会保存在本浏览器）：');
+    if (!input) return;
+    localStorage.setItem('github_pat', input.trim());
+  }
+  const t = localStorage.getItem('github_pat');
 
-    if ('showSaveFilePicker' in window) {
-      try {
-        if (fileHandle) {
-          let perm = await fileHandle.queryPermission({ mode: 'readwrite' });
-          if (perm !== 'granted') {
-            perm = await fileHandle.requestPermission({ mode: 'readwrite' });
-          }
-          if (perm !== 'granted') throw new Error('permission denied');
-        } else {
-          fileHandle = await window.showSaveFilePicker({
-            suggestedName: FILE,
-            types: [{ description: 'JSON 文件', accept: { 'application/json': ['.json'] } }]
-          });
-          await idbSet('saveFile', fileHandle);
-        }
-        const w = await fileHandle.createWritable();
-        await w.write(json);
-        await w.close();
-        markSaved();
-        return;
-      } catch (e) {
-        if (e && e.name === 'AbortError') return;
-        console.warn('picker save failed, fallback to download', e);
-      }
+  const owner = 'mmc-n33';
+  const repo = 'html';
+  const path = 'html/behavior-calendar.json';
+  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+
+  const headers = {
+    'Authorization': `Bearer ${t}`,
+    'Accept': 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+    'Content-Type': 'application/json'
+  };
+
+  try {
+    // 1. 先 GET 拿到当前文件的 sha
+    const getResp = await fetch(apiUrl, { headers });
+    if (!getResp.ok) throw new Error(`获取文件信息失败：${getResp.status}`);
+    const fileInfo = await getResp.json();
+    const sha = fileInfo.sha; // 更新文件必须带上这个
+
+    // 2. 把最新的 data 转成 JSON 字符串，再做 Base64 编码
+    const newContent = JSON.stringify(data, null, 2);
+    // 注意：btoa 不能直接处理中文，需要先 encodeURIComponent 再特殊处理
+    const contentBase64 = btoa(unescape(encodeURIComponent(newContent)));
+
+    // 3. PUT 回写文件
+    const putResp = await fetch(apiUrl, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({
+        message: 'update behavior calendar from web',
+        content: contentBase64,
+        sha: sha
+      })
+    });
+
+    if (!putResp.ok) {
+      const errBody = await putResp.json().catch(() => ({}));
+      throw new Error(`写入失败：${putResp.status} ${errBody.message || ''}`);
     }
 
-    // 不支持写文件时：下载 behavior-calendar.json，用户手动覆盖
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = FILE;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
-    markSaved();
+    markSaved(); // 更新页面上的“已保存”状态
+  } catch (err) {
+    console.error(err);
+    alert('保存到 GitHub 失败：' + err.message + '\n请检查 Token 是否过期或权限不足。');
   }
+}
 
-  if (!IS_MOBILE) {
-    saveBtn.addEventListener('click', function () {
-      saveBtn.disabled = true;
-      saveToFile().finally(function () { saveBtn.disabled = false; });
-    });
-  }
-
-  // ---------- 启动 ----------
-  // 恢复上次保存的文件句柄（只在权限仍是 granted 时使用，避免自动弹窗）
-  if ('showSaveFilePicker' in window) {
-    try {
-      const h = await idbGet('saveFile');
-      if (h) {
-        const perm = await h.queryPermission({ mode: 'readwrite' });
-        if (perm === 'granted') fileHandle = h;
-      }
-    } catch (e) {}
-  }
-
-  await loadJson();
-  build();
-})();
+// 把按钮的点击事件从 saveToFile 改为 saveToGitHub
+// saveBtn.addEventListener('click', saveToGitHub);
 </script>
 </body>
 </html>
