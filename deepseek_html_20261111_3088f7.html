@@ -23,16 +23,16 @@
   }
   .warn-bar code { background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px; }
 
-  .bar {
+  .bar-top {
     display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
     font-size: 12px; margin-bottom: 8px;
   }
-  .bar button {
+  .bar-top button {
     font-size: 12px; padding: 5px 12px; border: 1px solid #d0d7de;
     background: #fff; border-radius: 6px; cursor: pointer; color: #444;
   }
-  .bar button:active { background: #eef1f4; }
-  .bar button:disabled { opacity: .5; cursor: default; }
+  .bar-top button:active { background: #eef1f4; }
+  .bar-top button:disabled { opacity: .5; cursor: default; }
   .status { display: inline-flex; align-items: center; gap: 6px; color: #555; }
   .status .led { width: 8px; height: 8px; border-radius: 50%; background: #b2bac2; display: inline-block; }
   .status.ok .led { background: #27ae60; }
@@ -56,25 +56,32 @@
   .head { text-align: center; font-size: 11px; font-weight: 700; color: #7a8794; padding: 2px 0; }
 
   .day {
+    position: relative;
     background: #fff; border: 1px solid var(--line); border-radius: 6px;
     min-height: 64px; padding: 4px; display: flex; flex-direction: column; gap: 3px;
     overflow: hidden;
   }
   .day.empty { background: transparent; border-color: transparent; }
-  .day.past { background: #f7f8fa; border-color: #eceff3; }
+  .day.past { border-color: #eceff3; }
 
-  .day-num { font-size: 11px; font-weight: 700; color: #6b7785; line-height: 1; }
-  .day.has-bg .day-num { color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.45); }
+  .day-num {
+    position: relative; z-index: 1;
+    font-size: 11px; font-weight: 700; color: #444; line-height: 1;
+    text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff;
+  }
 
-  .behaviors { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; margin-top: auto; }
+  .behaviors {
+    position: relative; z-index: 1;
+    display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; margin-top: auto;
+  }
   .b {
-    border: 1px solid rgba(0,0,0,0.09); background: rgba(255,255,255,0.7);
+    border: 1px solid rgba(0,0,0,0.10); background: rgba(255,255,255,0.88);
     color: #555; font-size: 9px; font-weight: 700; padding: 2px 0;
     border-radius: 3px; cursor: pointer; line-height: 1.2;
   }
   .b.on {
     background: #fff; border-color: transparent;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.22);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.25);
   }
   .b.on[data-b="A"] { color: var(--a); }
   .b.on[data-b="B"] { color: var(--b); }
@@ -82,9 +89,11 @@
   .b.on[data-b="D"] { color: var(--d); }
   .b.on[data-b="E"] { color: var(--e); }
 
+  .day.past .b { display: none; }
+
   @media (max-width: 720px) {
     .grid { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
-    .day { min-height: 60px; padding: 3px; border-radius: 5px; }
+    .day { min-height: 58px; padding: 3px; border-radius: 5px; }
     .day-num { font-size: 10px; }
     .behaviors { grid-template-columns: repeat(3, 1fr); }
     .b { font-size: 9px; padding: 1px 0; border-radius: 2px; }
@@ -99,7 +108,7 @@
     请通过 <code>http://</code> 访问页面，或部署到 GitHub Pages。
   </div>
 
-  <div class="bar">
+  <div class="bar-top">
     <span class="status" id="loadStatus"><i class="led"></i><span id="loadText">加载中…</span></span>
     <span class="status" id="saveStatus"><i class="led"></i><span id="saveText">—</span></span>
     <button id="saveBtn">保存到 GitHub</button>
@@ -131,10 +140,9 @@
   const START = new Date(2026, 10, 1);
   const END = new Date(2027, 5, 1);
 
-  // GitHub 仓库信息（根据你的 commit 链接推断）
   const GITHUB_OWNER = 'mmc-n33';
   const GITHUB_REPO = 'html';
-  const GITHUB_PATH = 'behavior-calendar.json'; // 文件在仓库中的路径
+  const GITHUB_PATH = 'behavior-calendar.json';
 
   const TODAY = new Date();
   TODAY.setHours(0, 0, 0, 0);
@@ -161,28 +169,24 @@
   }
 
   let data = {};
-  let dirty = false;
 
   function setLoad(kind, text) {
     loadStatus.className = 'status' + (kind ? ' ' + kind : '');
     loadText.textContent = text;
   }
   function markDirty() {
-    dirty = true;
     if (!IS_MOBILE) {
       saveStatus.className = 'status warn';
       saveText.textContent = '有未保存的更改';
     }
   }
   function markSaved() {
-    dirty = false;
     if (!IS_MOBILE) {
       saveStatus.className = 'status ok';
       saveText.textContent = '已保存';
     }
   }
 
-  // ---------- 自动加载 json ----------
   async function loadJson() {
     setLoad('', '加载中…');
     let fromJson = false;
@@ -216,30 +220,27 @@
     }
   }
 
-  // ---------- 颜色渲染（固定 A→B→C→D→E 顺序） ----------
+  // 背景：固定 5 段竖条，做了的段上色，没做的段透明
   function bgFor(selected) {
-    const list = BEHAVIORS.filter(function (b) { return selected.indexOf(b) !== -1; });
-    if (!list.length) return '';
-    const n = list.length;
-    if (n === 1) return COLOR[list[0]];
-    const stops = list.map(function (b, i) {
-      const s = (i / n * 100).toFixed(3);
-      const e = ((i + 1) / n * 100).toFixed(3);
-      return COLOR[b] + ' ' + s + '% ' + e + '%';
+    if (!selected.length) return '';
+    const stops = [];
+    BEHAVIORS.forEach(function (b, i) {
+      const s = (i * 20).toFixed(2);
+      const e = ((i + 1) * 20).toFixed(2);
+      const c = selected.indexOf(b) !== -1 ? COLOR[b] : 'transparent';
+      stops.push(c + ' ' + s + '% ' + e + '%');
     });
     return 'linear-gradient(90deg, ' + stops.join(', ') + ')';
   }
 
   function applyCell(cell, key) {
     const arr = Array.isArray(data[key]) ? data[key] : [];
-    cell.style.background = bgFor(arr);
-    cell.classList.toggle('has-bg', arr.length > 0);
+    cell.style.background = bgFor(arr) || '#fff';
     cell.querySelectorAll('.b').forEach(function (btn) {
       btn.classList.toggle('on', arr.indexOf(btn.dataset.b) !== -1);
     });
   }
 
-  // ---------- 表头 ----------
   const weekNames = ['一', '二', '三', '四', '五', '六', '日'];
   for (let k = 0; k < 2; k++) {
     weekNames.forEach(function (n) {
@@ -279,20 +280,19 @@
         num.textContent = labelOf(cur);
         cell.appendChild(num);
 
-        if (!isPast && !IS_MOBILE) {
-          const box = document.createElement('div');
-          box.className = 'behaviors';
-          BEHAVIORS.forEach(function (b) {
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'b';
-            btn.dataset.b = b;
-            btn.textContent = LABELS[b];
-            btn.setAttribute('aria-label', labelOf(cur) + ' ' + LABELS[b]);
-            box.appendChild(btn);
-          });
-          cell.appendChild(box);
-        }
+        // 按钮始终渲染，保持原大小；过去的日子用 CSS 隐藏
+        const box = document.createElement('div');
+        box.className = 'behaviors';
+        BEHAVIORS.forEach(function (b) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'b';
+          btn.dataset.b = b;
+          btn.textContent = LABELS[b];
+          btn.setAttribute('aria-label', labelOf(cur) + ' ' + LABELS[b]);
+          box.appendChild(btn);
+        });
+        cell.appendChild(box);
 
         applyCell(cell, key);
       }
@@ -302,12 +302,12 @@
     }
   }
 
-  // ---------- 点击行为：只改内存和 localStorage ----------
   cal.addEventListener('click', function (e) {
     const btn = e.target.closest('.b');
     if (!btn) return;
     const cell = btn.closest('.day');
     if (!cell || !cell.dataset.date) return;
+    if (IS_MOBILE || cell.classList.contains('past')) return;
 
     const key = cell.dataset.date;
     const b = btn.dataset.b;
@@ -325,7 +325,6 @@
     markDirty();
   });
 
-  // ---------- Token 管理 ----------
   function getToken() {
     return localStorage.getItem(TOKEN_KEY) || '';
   }
@@ -336,7 +335,7 @@
       '请输入 GitHub Fine-grained Token（需要 Contents: Read and write 权限，仅授权 mmc-n33/html 仓库）。\n留空并确定可清除已保存的 Token。',
       current ? '（已保存，留空可清除）' : ''
     );
-    if (input === null) return; // 取消
+    if (input === null) return;
     const t = input.trim();
     if (t) {
       localStorage.setItem(TOKEN_KEY, t);
@@ -347,7 +346,6 @@
     }
   });
 
-  // ---------- 保存到 GitHub ----------
   async function saveToGitHub() {
     const token = getToken();
     if (!token) {
@@ -368,7 +366,6 @@
     saveText.textContent = '正在保存…';
 
     try {
-      // 1. 获取当前文件的 sha
       const getResp = await fetch(apiUrl, { headers });
       if (!getResp.ok) {
         const errBody = await getResp.json().catch(function () { return {}; });
@@ -377,11 +374,9 @@
       const fileInfo = await getResp.json();
       const sha = fileInfo.sha;
 
-      // 2. 编码内容（处理中文）
       const newContent = JSON.stringify(data, null, 2);
       const contentBase64 = btoa(unescape(encodeURIComponent(newContent)));
 
-      // 3. PUT 更新文件
       const putResp = await fetch(apiUrl, {
         method: 'PUT',
         headers: headers,
@@ -412,7 +407,6 @@
     saveBtn.addEventListener('click', saveToGitHub);
   }
 
-  // ---------- 启动 ----------
   await loadJson();
   build();
 })();
